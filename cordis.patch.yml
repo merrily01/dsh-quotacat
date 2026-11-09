@@ -1,0 +1,12 @@
+# dsh-quotacat bundle patch — one row that is simultaneously the host
+# plugin (node half, package main -> dist/index.js) and the browser roster
+# entry (dsh.client declaration -> dist/client.js).
+- insert:
+    - id: quotacat
+      name: dsh-quotacat
+      config:
+        # GLM API Key（也可不填，改用环境变量 GLM_API_KEY / QUOTACAT_API_KEY）
+        apiKey: ''
+        # 自动刷新间隔（分钟），0 = 只在打开面板/调用工具时拉取
+        refreshMinutes: 10
+        baseURL: 'https://open.bigmodel.cn'
