@@ -52,6 +52,7 @@ export function apply(ctx: Context, config: Config): void {
   /** 最近一次实际模型调用的 provider/model（来自 llm/stream 事件）。 */
   let activeProvider: string | undefined
   let activeModel: string | undefined
+  let lastEventAt = 0
 
   /** 每个会话最近一次对话调用的 provider（sessionId -> {provider, at}）。 */
   const sessionProviders = new Map<string, { provider: string; at: number }>()
@@ -60,41 +61,59 @@ export function apply(ctx: Context, config: Config): void {
   const seenProviders = new Map<string, { count: number; lastAt: number; lastModel?: string; lastSession?: string }>()
 
   let listening = false
-  try {
-    const events = ctx as unknown as {
-      on: (event: string, fn: (options: {
-        provider?: string
-        model?: string
-        sessionId?: string
-        purpose?: string
-      }, next: () => unknown) => unknown) => void
-    }
-    events.on('llm/stream', (options, next) => {
-      listening = true
-      const provider = options?.provider
-      if (typeof provider === 'string') {
-        // 诊断统计（不区分调用目的，任何到达的调用都记）
-        const prev = seenProviders.get(provider)
-        seenProviders.set(provider, {
-          count: (prev?.count ?? 0) + 1,
-          lastAt: Date.now(),
-          lastModel: options?.model,
-          lastSession: typeof options?.sessionId === 'string' ? options.sessionId : undefined,
-        })
-        activeModel = options?.model
-        if (options?.purpose === undefined) {
-          activeProvider = provider
-          const sid = options?.sessionId
-          if (typeof sid === 'string' && sid.length > 0) {
-            sessionProviders.set(sid, { provider, at: Date.now() })
-          }
+
+  const onStream = (options: {
+    provider?: string
+    model?: string
+    sessionId?: string
+    purpose?: string
+  }, next: () => unknown): unknown => {
+    listening = true
+    lastEventAt = Date.now()
+    const provider = options?.provider
+    if (typeof provider === 'string') {
+      // 诊断统计（不区分调用目的，任何到达的调用都记）
+      const prev = seenProviders.get(provider)
+      seenProviders.set(provider, {
+        count: (prev?.count ?? 0) + 1,
+        lastAt: Date.now(),
+        lastModel: options?.model,
+        lastSession: typeof options?.sessionId === 'string' ? options.sessionId : undefined,
+      })
+      activeModel = options?.model
+      if (options?.purpose === undefined) {
+        activeProvider = provider
+        const sid = options?.sessionId
+        if (typeof sid === 'string' && sid.length > 0) {
+          sessionProviders.set(sid, { provider, at: Date.now() })
         }
       }
-      return next()
-    })
-  } catch {
-    // 宿主无 llm 服务时忽略（事件不可用则指示器始终显示 GLM）
+    }
+    return next()
   }
+
+  /**
+   * 注册事件监听。llm 服务光纤重启（如切换/重配模型）会销毁绑在旧实例上的
+   * 监听器，因此用心跳式重注册：每 60 秒拆旧挂新，服务重启后 1 分钟内自愈。
+   */
+  let disposeListener: (() => void) | undefined
+  const registerListener = (): void => {
+    try {
+      const events = ctx as unknown as {
+        on: (event: string, fn: typeof onStream) => () => void
+      }
+      disposeListener?.()
+      disposeListener = events.on('llm/stream', onStream) ?? undefined
+    } catch {
+      // 宿主无 llm 服务时忽略（事件不可用则指示器始终显示 GLM）
+    }
+  }
+  registerListener()
+  const heartbeat = setInterval(registerListener, 60 * 1000)
+  ctx.effect(() => () => {
+    clearInterval(heartbeat)
+    disposeListener?.()
+  })
 
   /** 各 provider 最近 10 分钟内的对话活跃情况（供客户端判断）。 */
   function recentProviders(): Array<{ provider: string; at: number }> {
@@ -110,9 +129,13 @@ export function apply(ctx: Context, config: Config): void {
     return out.sort((a, b) => b.at - a.at)
   }
 
+  /** 数据新鲜度：30 分钟内没有事件视为陈旧，指示器恢复默认（高亮）。 */
+  const FRESH_MS = 30 * 60_000
+
   /** 当前活跃 provider 是否由我们支持的额度服务覆盖。 */
   function isActiveSupported(): boolean {
     if (activeProvider === undefined) return true // 尚无调用记录，默认显示
+    if (Date.now() - lastEventAt > FRESH_MS) return true // 数据陈旧，不再据此变暗
     return /zai|glm|zhipu|bigmodel/i.test(activeProvider)
   }
 
@@ -242,6 +265,7 @@ export function apply(ctx: Context, config: Config): void {
         activeProvider,
         activeModel,
         activeSupported: isActiveSupported(),
+        activeFresh: lastEventAt > 0 && Date.now() - lastEventAt <= FRESH_MS,
         recent: recentProviders(),
         listening,
         seen: [...seenProviders.entries()].map(([provider, v]) => ({ provider, ...v })),

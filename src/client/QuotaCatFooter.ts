@@ -63,7 +63,11 @@ export function QuotaCatFooter(_props: { t: (key: string) => string }): any {
         .then((s) => {
           if (!alive) return
           const recent = s.recent ?? []
-          setActive({ provider: recent[0]?.provider ?? s.activeProvider, model: s.activeModel })
+          // 优先最近活跃 provider；无近期数据时，仅当 activeProvider 仍新鲜才采用，
+          // 陈旧数据不用于变暗（activeFresh 缺省视为新鲜，兼容旧 host）
+          const stale = s.activeFresh === false
+          const provider = recent[0]?.provider ?? (stale ? undefined : s.activeProvider)
+          setActive({ provider, model: stale ? undefined : s.activeModel })
         })
         .catch(() => {})
     }

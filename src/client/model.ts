@@ -15,6 +15,8 @@ export interface StatusInfo {
   activeProvider?: string
   activeModel?: string
   activeSupported?: boolean
+  /** activeProvider 是否在 30 分钟新鲜窗口内；false 时客户端不据此变暗 */
+  activeFresh?: boolean
   /** 各会话最近 10 分钟内对话调用的 provider，按时间倒序 */
   recent?: Array<{ provider: string; at: number }>
 }
