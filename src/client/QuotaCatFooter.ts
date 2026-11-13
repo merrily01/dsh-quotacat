@@ -24,6 +24,18 @@ function severity(pct: number): string {
   return pct < 60 ? '#22c55e' : pct < 85 ? '#eab308' : '#ef4444'
 }
 
+/** 重置时刻显示：当天只显示 HH:MM，跨天显示 MM-DD HH:MM。 */
+function formatReset(ms: number): string {
+  const d = new Date(ms)
+  const now = new Date()
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return sameDay ? hm : `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hm}`
+}
+
 function GaugeIcon(): any {
   if (prim !== undefined && typeof prim.IconGaugeOutlineRegular !== 'undefined') {
     return getReact().createElement(prim.IconGaugeOutlineRegular)
@@ -204,7 +216,7 @@ function renderDialog(
         React.createElement(
           'dd',
           { key: `${w.label}-v`, style: { color: severity(p) } },
-          `${p}%${w.resetsAt !== undefined ? ` · ${new Date(w.resetsAt).toLocaleTimeString().slice(0, 5)} 重置` : ''}`,
+          `${p}%${w.resetsAt !== undefined ? ` · ${formatReset(w.resetsAt)} 重置` : ''}`,
         ),
       )
       for (const m of w.mcpToolBreakdown ?? []) {
