@@ -44,4 +44,12 @@ export interface ReportResponse {
   /** 未配置 API key 时 missingKey=true */
   missingKey?: boolean
   report?: UsageReport
+  /** 近 24 小时 MCP 工具调用（独立接口，失败时省略） */
+  toolUsage24h?: ToolUsage24h
+}
+
+export interface ToolUsage24h {
+  networkSearches: number
+  webReads: number
+  zreadCalls: number
 }

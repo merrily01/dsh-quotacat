@@ -7,7 +7,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { fetchGlmUsage, QuotaCatError } from './glm'
+import { fetchGlmUsage, fetchGlmToolUsage, QuotaCatError, type ToolUsage24h } from './glm'
 import './server-types.d.ts'
 import { API, type ReportResponse, type UsageReport } from './shared/api'
 
@@ -29,6 +29,7 @@ interface Config {
 
 interface State {
   report?: UsageReport
+  toolUsage24h?: ToolUsage24h
   error?: string
   fetchedAt: number
   inflight?: Promise<void>
@@ -182,7 +183,16 @@ export function apply(ctx: Context, config: Config): void {
       return
     }
     try {
-      state.report = await fetchGlmUsage(key, cfg.baseURL)
+      // 两个接口并行；tool-usage 失败不影响主报告
+      const [report, toolResult] = await Promise.all([
+        fetchGlmUsage(key, cfg.baseURL),
+        fetchGlmToolUsage(key, cfg.baseURL).then(
+          (t) => t,
+          () => undefined satisfies undefined as ToolUsage24h | undefined,
+        ),
+      ])
+      state.report = report
+      state.toolUsage24h = toolResult
       state.fetchedAt = Date.now()
       state.error = undefined
       logger.info('refreshed GLM usage')
@@ -203,7 +213,7 @@ export function apply(ctx: Context, config: Config): void {
   async function buildResponse(): Promise<ReportResponse> {
     const key = await resolveKey()
     if (key.length === 0) return { ok: true, missingKey: true }
-    return { ok: state.error === undefined, error: state.error, report: state.report }
+    return { ok: state.error === undefined, error: state.error, report: state.report, toolUsage24h: state.toolUsage24h }
   }
 
   // 定时刷新（refreshMinutes=0 关闭）；不用 ctx.setInterval 以避免宿主接口差异

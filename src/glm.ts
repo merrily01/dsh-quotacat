@@ -75,6 +75,71 @@ export class QuotaCatError extends Error {
   }
 }
 
+/** 近 24 小时（整点对齐）MCP 工具调用量 —— Swift 版 fetchToolUsage 的移植。 */
+export interface ToolUsage24h {
+  networkSearches: number
+  webReads: number
+  zreadCalls: number
+}
+
+interface GlmToolUsagePayload {
+  totalUsage?: {
+    totalNetworkSearchCount?: number
+    totalWebReadMcpCount?: number
+    totalZreadMcpCount?: number
+  }
+}
+
+/** "YYYY-MM-DD HH:mm:ss"，与 Swift 版 twentyFourHourWindow 一致（整点对齐的 24h 窗口）。 */
+function windowParam(date: Date): string {
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`
+}
+
+export async function fetchGlmToolUsage(apiKey: string, baseURL: string, timeoutMs = 15000): Promise<ToolUsage24h> {
+  const base = baseURL.replace(/\/+$/, '')
+  const hourStart = new Date()
+  hourStart.setMinutes(0, 0, 0)
+  const start = new Date(hourStart.getTime() - 24 * 3600_000)
+  const end = new Date(hourStart.getTime() + 3600_000 - 1000)
+  const url = `${base}/api/monitor/usage/tool-usage?startTime=${encodeURIComponent(windowParam(start))}&endTime=${encodeURIComponent(windowParam(end))}`
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  let resp: Response
+  try {
+    resp = await fetch(url, {
+      headers: {
+        Authorization: apiKey,
+        'Accept-Language': 'en-US,en',
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+    })
+  } catch (e) {
+    throw new QuotaCatError(`网络错误：${(e as Error).message}`, 'network')
+  } finally {
+    clearTimeout(timer)
+  }
+  if (resp.status === 401 || resp.status === 403) {
+    throw new QuotaCatError('API Key 无效或未授权（401/403）', 'unauthorized')
+  }
+  if (!(resp.status >= 200 && resp.status < 300)) {
+    throw new QuotaCatError(`HTTP ${resp.status}`)
+  }
+  const envelope = (await resp.json().catch(() => null)) as GlmEnvelope<GlmToolUsagePayload> | null
+  if (envelope === null) throw new QuotaCatError('tool-usage 响应不是合法 JSON', 'server')
+  if (envelope.code !== 0 && envelope.code !== 200) {
+    throw new QuotaCatError(`tool-usage 服务端错误 code=${envelope.code}`, 'server')
+  }
+  const t = envelope.data?.totalUsage ?? {}
+  return {
+    networkSearches: Math.round(t.totalNetworkSearchCount ?? 0),
+    webReads: Math.round(t.totalWebReadMcpCount ?? 0),
+    zreadCalls: Math.round(t.totalZreadMcpCount ?? 0),
+  }
+}
+
 /** 拉取并映射 GLM 用量报告。 */
 export async function fetchGlmUsage(apiKey: string, baseURL: string, timeoutMs = 15000): Promise<UsageReport> {
   const url = `${baseURL.replace(/\/+$/, '')}/api/monitor/usage/quota/limit`

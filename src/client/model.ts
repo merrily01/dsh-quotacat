@@ -7,6 +7,7 @@ export interface Model {
   missingKey?: boolean
   error?: string
   report?: UsageReport
+  toolUsage24h?: import('../shared/api').ToolUsage24h
 }
 
 export interface StatusInfo {

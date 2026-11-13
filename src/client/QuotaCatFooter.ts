@@ -208,6 +208,20 @@ function renderDialog(
     rows.push(
       React.createElement('dt', { key: 'tier' }, '套餐'),
       React.createElement('dd', { key: 'tierv' }, r.planTier.toUpperCase()),
+      ...(model.toolUsage24h !== undefined
+        ? [
+            React.createElement('dt', { key: 's24' }, '24h 搜索'),
+            React.createElement('dd', { key: 's24v' }, `${model.toolUsage24h.networkSearches} 次`),
+            React.createElement('dt', { key: 'w24' }, '24h 网页'),
+            React.createElement('dd', { key: 'w24v' }, `${model.toolUsage24h.webReads} 次`),
+            ...(model.toolUsage24h.zreadCalls > 0
+              ? [
+                  React.createElement('dt', { key: 'z24' }, '24h zread'),
+                  React.createElement('dd', { key: 'z24v' }, `${model.toolUsage24h.zreadCalls} 次`),
+                ]
+              : []),
+          ]
+        : []),
     )
     for (const w of r.windows) {
       const p = Math.round(w.percentage * 100)
