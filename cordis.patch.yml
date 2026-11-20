@@ -5,7 +5,8 @@
     - id: quotacat
       name: dsh-quotacat
       config:
-        # GLM API Key（也可不填，改用环境变量 GLM_API_KEY / QUOTACAT_API_KEY 或面板设置里保存）
+        # GLM API Key：默认自动获取（宿主登录凭据 → 环境变量），一般无需填写；
+        # 此字段仅作显式覆盖用
         apiKey: ''
         # 自动刷新间隔（分钟），0 = 只在打开面板/调用工具时拉取
         refreshMinutes: 10

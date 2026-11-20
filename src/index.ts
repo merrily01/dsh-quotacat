@@ -15,7 +15,6 @@ import {
   type SettingsInfo,
   type ThresholdAlert,
   type UsageReport,
-  type ValidateResponse,
 } from './shared/api'
 
 export const name = 'dsh-quotacat'
@@ -435,7 +434,6 @@ export function apply(ctx: Context, config: Config): void {
       let payload: {
         refreshMinutes?: unknown
         baseURL?: unknown
-        apiKey?: unknown
         notificationEnabled?: unknown
         notificationThreshold?: unknown
       }
@@ -471,12 +469,6 @@ export function apply(ctx: Context, config: Config): void {
         }
         baseURL = payload.baseURL.replace(/\/+$/, '')
       }
-      let apiKey: string | undefined
-      if (payload.apiKey !== undefined && typeof payload.apiKey !== 'string') {
-        sendJson(res, 400, { ok: false, error: 'apiKey 需为字符串' })
-        return
-      }
-      if (payload.apiKey !== undefined) apiKey = (payload.apiKey as string).trim()
       let notificationEnabled: boolean | undefined
       if (payload.notificationEnabled !== undefined) {
         if (typeof payload.notificationEnabled !== 'boolean') {
@@ -496,54 +488,16 @@ export function apply(ctx: Context, config: Config): void {
       }
 
       // 执行
-      const errors: string[] = []
-      const credentials = getCredentials()
       const editor = getConfigEditor()
       const entry = (ctx as { fiber?: { entry?: unknown } }).fiber?.entry
 
-      // 1) 密钥：优先写宿主 credentials；无该能力时退回 config.apiKey
-      if (apiKey !== undefined) {
-        if (apiKey.length === 0) {
-          // 清除
-          if (cfg.apiKey.length > 0 && editor !== undefined && entry !== undefined) {
-            try {
-              await editor.edit(entry, (c) => ({ ...c, apiKey: '' }))
-            } catch (e) {
-              errors.push(`清除配置密钥失败：${(e as Error).message}`)
-            }
-          }
-          if (credentials?.unset !== undefined) {
-            try {
-              await credentials.unset(CREDENTIAL_REFS[0] as never)
-            } catch (e) {
-              errors.push(`清除凭据失败：${(e as Error).message}`)
-            }
-          }
-        } else if (credentials?.set !== undefined) {
-          try {
-            await credentials.set(CREDENTIAL_REFS[0] as never, apiKey)
-          } catch (e) {
-            errors.push(`保存凭据失败：${(e as Error).message}`)
-          }
-        } else if (editor !== undefined && entry !== undefined) {
-          try {
-            await editor.edit(entry, (c) => ({ ...c, apiKey }))
-          } catch (e) {
-            errors.push(`保存配置失败：${(e as Error).message}`)
-          }
-        } else {
-          errors.push('宿主未提供凭据存储或配置编辑服务，无法保存密钥')
-        }
-      }
-
-      // 2) 普通字段：先响应再写（普通字段变更会重启插件，可能中断本请求）
+      // 普通字段：先响应再写（普通字段变更会重启插件，可能中断本请求）
       const configDirty =
         refreshMinutes !== undefined ||
         baseURL !== undefined ||
         notificationEnabled !== undefined ||
-        notificationThreshold !== undefined ||
-        (apiKey !== undefined && apiKey.length > 0 && credentials?.set === undefined && cfg.apiKey.length === 0)
-      sendJson(res, errors.length > 0 ? 207 : 200, { ok: errors.length === 0, error: errors.length > 0 ? errors.join('；') : undefined })
+        notificationThreshold !== undefined
+      sendJson(res, 200, { ok: true })
 
       if (configDirty && editor !== undefined && entry !== undefined) {
         // 稍作延迟，让响应先落盘
@@ -554,46 +508,10 @@ export function apply(ctx: Context, config: Config): void {
             if (baseURL !== undefined) next.baseURL = baseURL
             if (notificationEnabled !== undefined) next.notificationEnabled = notificationEnabled
             if (notificationThreshold !== undefined) next.notificationThreshold = notificationThreshold
-            if (apiKey !== undefined && apiKey.length > 0 && credentials?.set === undefined) next.apiKey = apiKey
             return next
           }).catch((e: Error) => logger.warn('save settings failed: %s', e.message))
         }, 50)
         ctx.effect(() => () => clearTimeout(timer))
-      }
-    },
-  }))
-
-  // ---- 验证路由：候选 key（或当前已保存的 key）立即拉一次用量 ----
-  disposeOnStop(ctx, ctx.webServer.register({
-    kind: 'exact',
-    path: API.validate,
-    handler: async (req, res) => {
-      if (req.method !== 'POST') {
-        sendJson(res, 405, { ok: false, error: 'method not allowed' })
-        return
-      }
-      let candidate: string | undefined
-      try {
-        const body = JSON.parse(await readBody(req)) as { apiKey?: unknown }
-        if (typeof body.apiKey === 'string' && body.apiKey.trim().length > 0) candidate = body.apiKey.trim()
-      } catch {
-        // 空 body = 验证当前已保存的 key
-      }
-      const key = candidate ?? await resolveKey()
-      if (key.length === 0) {
-        sendJson(res, 200, { ok: false, error: '请先输入 API Key' } satisfies ValidateResponse)
-        return
-      }
-      try {
-        const report = await fetchGlmUsage(key, cfg.baseURL)
-        const fiveHour = report.windows.find((w) => w.kind === 'fiveHourTokens')
-        sendJson(res, 200, {
-          ok: true,
-          planTier: report.planTier,
-          fiveHourPct: fiveHour?.percentage,
-        } satisfies ValidateResponse)
-      } catch (e) {
-        sendJson(res, 200, { ok: false, error: (e as QuotaCatError).message } satisfies ValidateResponse)
       }
     },
   }))

@@ -51,12 +51,3 @@ export async function saveSettings(payload: import('../shared/api').SettingsPayl
   }).then((r) => r.json() as Promise<{ ok: boolean; error?: string }>)
   return resp
 }
-
-export async function validateKey(apiKey: string): Promise<import('../shared/api').ValidateResponse> {
-  const resp = await fetch(API.validate, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(apiKey.length > 0 ? { apiKey } : {}),
-  }).then((r) => r.json() as Promise<import('../shared/api').ValidateResponse>)
-  return resp
-}

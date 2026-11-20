@@ -11,8 +11,6 @@ export const API = {
   status: `${API_BASE}/status`,
   /** GET：设置项当前值；POST：保存设置 */
   settings: `${API_BASE}/settings`,
-  /** POST：验证 API Key（可携带候选 key，立即拉一次用量） */
-  validate: `${API_BASE}/validate`,
 } as const
 
 export type WindowKind = 'fiveHourTokens' | 'monthlyMCP' | 'unknown'
@@ -96,18 +94,6 @@ export interface SettingsInfo {
 export interface SettingsPayload {
   refreshMinutes?: number
   baseURL?: string
-  /** 非空 = 保存；空字符串 = 清除已保存的密钥 */
-  apiKey?: string
   notificationEnabled?: boolean
   notificationThreshold?: number
-}
-
-/** POST /validate 响应 */
-export interface ValidateResponse {
-  ok: boolean
-  /** 验证通过时的套餐等级 */
-  planTier?: string
-  /** 验证通过时的 5h 窗口占比（0-1） */
-  fiveHourPct?: number
-  error?: string
 }

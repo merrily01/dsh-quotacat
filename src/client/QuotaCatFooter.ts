@@ -3,7 +3,7 @@
 
 import { getReact, getReactDOM, tryRequire } from './runtime'
 import { placePanel } from './anchoredPosition'
-import { fetchReport, fetchSettings, saveSettings, validateKey, fetchStatus, type Model, type Settings } from './model'
+import { fetchReport, fetchSettings, saveSettings, fetchStatus, type Model, type Settings } from './model'
 
 const prim = tryRequire('@deepseek-ai/dsh-client-ui-primitives')
 
@@ -189,17 +189,7 @@ export function QuotaCatFooter(_props: { t: (key: string) => string }): any {
   )
 }
 
-/** 密钥来源的可读标签。 */
-function keySourceLabel(s: Settings['key']): string {
-  if (s === undefined) return '未知'
-  if (s.source === 'credentials') return `已保存（凭据存储${s.masked !== undefined ? ` ${s.masked}` : ''}）`
-  if (s.source === 'config') return `插件配置${s.masked !== undefined ? ` ${s.masked}` : ''}`
-  if (s.source === 'env') return '环境变量'
-  return '未配置'
-}
-
-/** 设置表单（真正的组件，可用 hooks）。 */
-/** 刷新频率选项（对齐原版 QuotaCat 的 Picker 设计）。 */
+/** 刷新频率选项。 */
 const REFRESH_OPTIONS: Array<{ label: string; minutes: number }> = [
   { label: '1 分钟', minutes: 1 },
   { label: '5 分钟', minutes: 5 },
@@ -209,25 +199,34 @@ const REFRESH_OPTIONS: Array<{ label: string; minutes: number }> = [
   { label: '仅按需', minutes: 0 },
 ]
 
-/** 设置表单（真正的组件，可用 hooks）。产品结构对齐原版 macOS QuotaCat：
- *  API Key（显示/隐藏 + 验证）、刷新频率（选项化）、阈值提醒（开关 + 滑块）、支持作者。 */
+/** iOS 风格开关。 */
+function Switch(props: { checked: boolean; onChange: (v: boolean) => void, label?: string }): any {
+  const React = getReact()
+  return React.createElement(
+    'button',
+    {
+      type: 'button',
+      role: 'switch',
+      'aria-checked': props.checked,
+      'aria-label': props.label,
+      className: `qc-switch${props.checked ? ' qc-switch-on' : ''}`,
+      onClick: () => props.onChange(!props.checked),
+    },
+    React.createElement('span', { className: 'qc-switch-knob' }),
+  )
+}
+
+/** 设置表单。密钥全自动获取（宿主登录凭据/环境变量），用户无需感知。 */
 function SettingsForm(props: { onDone: () => void }): any {
   const React = getReact()
   const { useState, useEffect } = React
 
   const [info, setInfo] = useState<Settings | undefined>(undefined)
   const [refreshMinutes, setRefreshMinutes] = useState(10)
-  const [notificationEnabled, setNotificationEnabled] = useState(true)
+  const [notify, setNotify] = useState(true)
   const [threshold, setThreshold] = useState(0.8)
-  const [apiKey, setApiKey] = useState('')
-  const [showKey, setShowKey] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
-  const [messageOk, setMessageOk] = useState(false)
-
-  // ---- API Key 验证（原版核心交互：输入即验证，通过后自动保存） ----
-  const [validating, setValidating] = useState(false)
-  const [validation, setValidation] = useState('')
+  const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -235,130 +234,63 @@ function SettingsForm(props: { onDone: () => void }): any {
       if (!alive || s.ok !== true) return
       setInfo(s)
       setRefreshMinutes(s.refreshMinutes)
-      setNotificationEnabled(s.notificationEnabled)
+      setNotify(s.notificationEnabled)
       setThreshold(s.notificationThreshold)
-    }).catch(() => { if (alive) setMessage('读取设置失败') })
+    }).catch(() => {})
     return () => { alive = false }
   }, [])
-
-  const validate = () => {
-    if (validating) return
-    setValidating(true)
-    setValidation('')
-    validateKey(apiKey.trim()).then(async (r) => {
-      setValidating(false)
-      if (r.ok === true) {
-        // 验证通过 → 顺手保存这把 key（与原版行为一致：验证即保存）
-        if (apiKey.trim().length > 0) await saveSettings({ apiKey: apiKey.trim() }).catch(() => {})
-        setApiKey('')
-        setValidation(`验证通过 ✓（${(r.planTier ?? '').toUpperCase()} 套餐，5h 已用 ${Math.round((r.fiveHourPct ?? 0) * 100)}%）`)
-        props.onDone()
-      } else {
-        setValidation(`验证失败：${r.error ?? '未知错误'}`)
-      }
-    }).catch(() => {
-      setValidating(false)
-      setValidation('验证请求失败')
-    })
-  }
 
   const save = () => {
     if (saving) return
     setSaving(true)
-    setMessage('')
-    const payload: import('../shared/api').SettingsPayload = {
+    setSaved(false)
+    saveSettings({
       refreshMinutes,
-      notificationEnabled,
+      notificationEnabled: notify,
       notificationThreshold: threshold,
-    }
-    if (apiKey.trim().length > 0) payload.apiKey = apiKey.trim()
-    saveSettings(payload).then((r) => {
+    }).then((r) => {
       setSaving(false)
-      setApiKey('')
       if (r.ok) {
-        setMessage('已保存 ✓ 普通字段变更会重启插件，稍候生效。')
-        setMessageOk(true)
+        setSaved(true)
         props.onDone()
-      } else {
-        setMessage(`保存失败：${r.error ?? '未知错误'}`)
-        setMessageOk(false)
       }
-    }).catch(() => {
-      setSaving(false)
-      setMessage('保存请求失败')
-      setMessageOk(false)
-    })
+    }).catch(() => setSaving(false))
   }
 
-  const section = (title: string, ...children: any[]) =>
-    React.createElement(
-      'div',
-      { className: 'qc-s-section' },
-      React.createElement('div', { className: 'qc-s-section-title' }, title),
-      ...children,
-    )
-
-  const keyStatus = keySourceLabel(info?.key)
+  const keyReady = info?.key !== undefined && info.key.source !== 'none'
 
   return React.createElement(
-    'div',
-    { className: 'qc-settings' },
-    // ---- GLM API Key ----
-    section('GLM API Key',
-      React.createElement('div', { className: 'qc-s-row' },
-        React.createElement('input', {
-          className: 'qc-s-input qc-s-wide',
-          type: showKey ? 'text' : 'password',
-          value: apiKey,
-          placeholder: '粘贴 API Key',
-          autocomplete: 'off',
-          spellCheck: false,
-          onChange: (e: any) => setApiKey(e.target.value),
-        }),
-        React.createElement('button', {
-          className: 'qc-s-mini', type: 'button', onClick: () => setShowKey((v: boolean) => !v),
-        }, showKey ? '隐藏' : '显示'),
-      ),
-      React.createElement('div', { className: 'qc-s-row qc-s-inline' },
-        React.createElement('button', {
-          className: 'qc-s-mini qc-s-validate', type: 'button',
-          disabled: validating || (apiKey.trim().length === 0 && keyStatus === '未配置'),
-          onClick: validate,
-        }, validating ? '验证中…' : '验证'),
-        validation !== '' ? React.createElement('span', { className: validating ? 'qc-s-note' : 'qc-s-validation' }, validation) : null,
-      ),
-      React.createElement('div', { className: 'qc-s-note' }, `当前密钥：${keyStatus}${apiKey.trim().length === 0 ? '，输入新 Key 后点“验证”即保存' : ''}`),
-    ),
+    'div', { className: 'qc-settings' },
     // ---- 刷新频率 ----
-    section('刷新频率',
+    React.createElement('div', { className: 'qc-s-group' },
+      React.createElement('div', { className: 'qc-s-head' },
+        React.createElement('span', { className: 'qc-s-name' }, '自动刷新'),
+        React.createElement('span', { className: 'qc-s-hint' },
+          refreshMinutes === 0 ? '仅按需' : `每 ${refreshMinutes} 分钟`),
+      ),
       React.createElement('div', { className: 'qc-s-options' },
         REFRESH_OPTIONS.map((o) =>
           React.createElement('button', {
             key: o.minutes,
-            className: `qc-s-option${refreshMinutes === o.minutes ? ' qc-s-option-active' : ''}`,
+            className: `qc-s-option${refreshMinutes === o.minutes ? ' is-active' : ''}`,
             type: 'button',
             onClick: () => setRefreshMinutes(o.minutes),
           }, o.label),
         ),
       ),
-      React.createElement('div', { className: 'qc-s-note' }, refreshMinutes === 0 ? '仅在打开面板或调用 quota 工具时拉取' : `每 ${refreshMinutes} 分钟自动刷新一次`),
     ),
     // ---- 阈值提醒 ----
-    section('阈值提醒',
-      React.createElement('label', { className: 'qc-s-toggle' },
-        React.createElement('input', {
-          type: 'checkbox',
-          checked: notificationEnabled,
-          onChange: (e: any) => setNotificationEnabled(e.target.checked),
+    React.createElement('div', { className: 'qc-s-group' },
+      React.createElement('div', { className: 'qc-s-head' },
+        React.createElement('span', { className: 'qc-s-name' }, '额度阈值提醒'),
+        React.createElement(Switch, {
+          checked: notify,
+          onChange: setNotify,
+          label: '额度阈值提醒',
         }),
-        React.createElement('span', null, '额度阈值提醒'),
       ),
-      notificationEnabled
+      notify
         ? React.createElement('div', { className: 'qc-s-slider' },
-            React.createElement('div', { className: 'qc-s-slider-head' },
-              React.createElement('span', null, '触发阈值'),
-              React.createElement('span', { className: 'qc-s-slider-value' }, `${Math.round(threshold * 100)}%`),
-            ),
             React.createElement('input', {
               className: 'qc-s-range',
               type: 'range',
@@ -367,30 +299,33 @@ function SettingsForm(props: { onDone: () => void }): any {
               step: 0.05,
               value: threshold,
               onChange: (e: any) => setThreshold(Number(e.target.value)),
+              style: { '--qc-range-fill': `${((threshold - 0.5) / 0.45) * 100}%` } as any,
             }),
-            React.createElement('div', { className: 'qc-s-note' }, '5h 用量达到阈值时在面板提醒一次，降到阈值下方后才能再次触发。'),
+            React.createElement(
+              'div', { className: 'qc-s-slider-marks' },
+              React.createElement('span', { className: threshold <= 0.52 ? 'is-on' : undefined }, '50%'),
+              React.createElement('span', { className: 'is-on qc-s-slider-now' }, `${Math.round(threshold * 100)}%`),
+              React.createElement('span', { className: threshold >= 0.93 ? 'is-on' : undefined }, '95%'),
+            ),
+            React.createElement('div', { className: 'qc-s-hint' }, '5h 用量达到阈值时提醒一次，回落到阈值下方后恢复'),
           )
         : null,
     ),
-    // ---- 支持作者 ----
-    section('支持作者',
-      React.createElement('a', { className: 'qc-s-link', href: 'https://afdian.com/a/merrily01', target: '_blank', rel: 'noreferrer' },
-        '爱发电赞助', React.createElement('span', { className: 'qc-s-chevron' }, '›')),
-      React.createElement('a', { className: 'qc-s-link', href: 'https://www.bigmodel.cn/glm-coding?ic=8YZATIRSW1', target: '_blank', rel: 'noreferrer' },
-        '推荐 GLM Coding Plan', React.createElement('span', { className: 'qc-s-chevron' }, '›')),
-      React.createElement('div', { className: 'qc-s-note' }, '通过邀请链接注册，你我都能得奖励'),
+    // ---- 数据来源（只读，密钥全自动） ----
+    React.createElement('div', { className: 'qc-s-group qc-s-plain' },
+      React.createElement('div', { className: 'qc-s-head' },
+        React.createElement('span', { className: 'qc-s-name' }, '数据来源'),
+        React.createElement('span', { className: `qc-s-badge${keyReady ? ' is-ok' : ' is-warn'}` },
+          keyReady ? '已连接' : '未连接'),
+      ),
+      React.createElement('div', { className: 'qc-s-hint' }, 'GLM Coding Plan 凭据随宿主自动获取，无需手动配置'),
     ),
-    message !== '' ? React.createElement('div', { className: messageOk ? 'qc-s-message qc-s-ok' : 'qc-s-message' }, message) : null,
-    React.createElement(
-      'div',
-      { className: 'qc-s-actions' },
-      React.createElement('button', {
-        className: 'qc-s-save',
-        type: 'button',
-        disabled: saving || info === undefined,
-        onClick: save,
-      }, saving ? '保存中…' : '保存'),
-    ),
+    // ---- 保存 ----
+    React.createElement('button', {
+      className: 'qc-s-save', type: 'button',
+      disabled: saving || info === undefined,
+      onClick: save,
+    }, saving ? '保存中…' : saved ? '已保存 ✓' : '保存'),
   )
 }
 
