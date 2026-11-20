@@ -9,6 +9,10 @@ export const API = {
   refresh: `${API_BASE}/refresh`,
   /** GET：配置状态（是否已设置 key） */
   status: `${API_BASE}/status`,
+  /** GET：设置项当前值；POST：保存设置 */
+  settings: `${API_BASE}/settings`,
+  /** POST：验证 API Key（可携带候选 key，立即拉一次用量） */
+  validate: `${API_BASE}/validate`,
 } as const
 
 export type WindowKind = 'fiveHourTokens' | 'monthlyMCP' | 'unknown'
@@ -46,10 +50,64 @@ export interface ReportResponse {
   report?: UsageReport
   /** 近 24 小时 MCP 工具调用（独立接口，失败时省略） */
   toolUsage24h?: ToolUsage24h
+  /** 阈值提醒状态（5h 窗口用量达到阈值时 triggered=true，回落到阈值下方后自动复位） */
+  threshold?: ThresholdAlert
+}
+
+export interface ThresholdAlert {
+  enabled: boolean
+  /** 阈值，[0,1] */
+  value: number
+  /** 5h 窗口当前占比是否达到阈值（达到后到回落前只报一次） */
+  triggered: boolean
+  /** 达到阈值时的 5h 占比 */
+  pct: number
 }
 
 export interface ToolUsage24h {
   networkSearches: number
   webReads: number
   zreadCalls: number
+}
+
+/** GET /settings 返回：设置项当前值（不含密钥明文） */
+export interface SettingsInfo {
+  ok: boolean
+  /** 自动刷新间隔分钟；0 = 仅按需（打开面板/调用工具时） */
+  refreshMinutes: number
+  baseURL: string
+  /** 额度阈值提醒开关 */
+  notificationEnabled: boolean
+  /** 阈值 [0.5, 0.95] */
+  notificationThreshold: number
+  /** 密钥状态：来自 config.apiKey 或宿主 credentials */
+  key?: {
+    /** 'credentials' = 宿主凭据存储；'config' = 插件配置；'env' = 环境变量；'none' = 未配置 */
+    source: 'credentials' | 'config' | 'env' | 'none'
+    /** credentials 服务返回的掩码预览（如 sk-12…ef，可选） */
+    masked?: string
+  }
+  /** 保存能力是否可用（configEditor / credentials 服务缺失时为 false） */
+  editable: boolean
+  error?: string
+}
+
+/** POST /settings 请求体：只提交需要修改的字段 */
+export interface SettingsPayload {
+  refreshMinutes?: number
+  baseURL?: string
+  /** 非空 = 保存；空字符串 = 清除已保存的密钥 */
+  apiKey?: string
+  notificationEnabled?: boolean
+  notificationThreshold?: number
+}
+
+/** POST /validate 响应 */
+export interface ValidateResponse {
+  ok: boolean
+  /** 验证通过时的套餐等级 */
+  planTier?: string
+  /** 验证通过时的 5h 窗口占比（0-1） */
+  fiveHourPct?: number
+  error?: string
 }

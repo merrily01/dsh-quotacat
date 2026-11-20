@@ -5,8 +5,12 @@
     - id: quotacat
       name: dsh-quotacat
       config:
-        # GLM API Key（也可不填，改用环境变量 GLM_API_KEY / QUOTACAT_API_KEY）
+        # GLM API Key（也可不填，改用环境变量 GLM_API_KEY / QUOTACAT_API_KEY 或面板设置里保存）
         apiKey: ''
         # 自动刷新间隔（分钟），0 = 只在打开面板/调用工具时拉取
         refreshMinutes: 10
         baseURL: 'https://open.bigmodel.cn'
+        # 额度阈值提醒：5h 用量达到阈值时在面板标记一次，回落到阈值下方后复位
+        notificationEnabled: true
+        # 阈值 [0.5, 0.95]，默认 0.8
+        notificationThreshold: 0.8

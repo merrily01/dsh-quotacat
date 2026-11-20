@@ -8,6 +8,8 @@ export interface Model {
   error?: string
   report?: UsageReport
   toolUsage24h?: import('../shared/api').ToolUsage24h
+  /** 阈值提醒状态 */
+  threshold?: import('../shared/api').ThresholdAlert
 }
 
 export interface StatusInfo {
@@ -32,5 +34,29 @@ export async function fetchReport(force = false): Promise<Model> {
   if (resp.error !== undefined && resp.report === undefined) {
     return { loading: false, error: resp.error }
   }
-  return { loading: false, report: resp.report }
+  return { loading: false, report: resp.report, threshold: resp.threshold }
+}
+
+export type Settings = import('../shared/api').SettingsInfo
+
+export async function fetchSettings(): Promise<Settings> {
+  return (await fetch(API.settings, { cache: 'no-store' }).then((r) => r.json())) as Settings
+}
+
+export async function saveSettings(payload: import('../shared/api').SettingsPayload): Promise<{ ok: boolean; error?: string }> {
+  const resp = await fetch(API.settings, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then((r) => r.json() as Promise<{ ok: boolean; error?: string }>)
+  return resp
+}
+
+export async function validateKey(apiKey: string): Promise<import('../shared/api').ValidateResponse> {
+  const resp = await fetch(API.validate, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(apiKey.length > 0 ? { apiKey } : {}),
+  }).then((r) => r.json() as Promise<import('../shared/api').ValidateResponse>)
+  return resp
 }
