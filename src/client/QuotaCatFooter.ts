@@ -4,7 +4,7 @@
 import { getReact, getReactDOM, tryRequire } from './runtime.ts'
 import { placePanel } from './anchoredPosition.ts'
 import { fetchReport, fetchSettings, saveSettings, fetchStatus, type Model, type Settings } from './model.ts'
-import { OPEN_QUOTA_EVENT } from './events.ts'
+import { OPEN_QUOTA_EVENT, DATA_UPDATED_EVENT } from './events.ts'
 export { advanceThresholdLatch } from './thresholdLatch.ts'
 
 const prim = tryRequire('@deepseek-ai/dsh-client-ui-primitives')
@@ -128,6 +128,16 @@ export function QuotaCatFooter(_props: { t: (key: string) => string }): any {
     }
     window.addEventListener(OPEN_QUOTA_EVENT, openQuota)
     return () => window.removeEventListener(OPEN_QUOTA_EVENT, openQuota)
+  }, [])
+
+  // Toast 广播的新报告：立即更新 pill/弹框显示，与提醒保持同步
+  useEffect(() => {
+    const onData = (e: Event) => {
+      const detail = (e as CustomEvent).detail as Model | undefined
+      if (detail !== undefined && detail.report !== undefined) setModel(detail)
+    }
+    window.addEventListener(DATA_UPDATED_EVENT, onData)
+    return () => window.removeEventListener(DATA_UPDATED_EVENT, onData)
   }, [])
 
   // Esc / 点击外部关闭

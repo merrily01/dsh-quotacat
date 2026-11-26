@@ -1,7 +1,7 @@
 import { fetchReport } from './model.ts'
 import { getReact, tryRequire } from './runtime.ts'
 import { advanceThresholdLatch } from './thresholdLatch.ts'
-import { OPEN_QUOTA_EVENT } from './events.ts'
+import { OPEN_QUOTA_EVENT, DATA_UPDATED_EVENT } from './events.ts'
 
 interface AlertNotice {
   seq: number
@@ -24,6 +24,8 @@ export function QuotaAlertToast(): any {
     const poll = () => {
       fetchReport(false).then((model) => {
         if (!alive) return
+        // 广播最新报告，pill/dialog 立即跟进，避免提醒与显示不同步
+        window.dispatchEvent(new CustomEvent(DATA_UPDATED_EVENT, { detail: model }))
         const threshold = model.threshold
         const next = advanceThresholdLatch(latched.current, threshold?.triggered === true)
         latched.current = next.latched
