@@ -63,44 +63,65 @@ button.qc-pill[aria-expanded="true"] { background: var(--dsw-alias-interactive-b
 }
 .qc-d-refresh:hover { color: var(--dsw-alias-label-secondary); }
 .qc-d-note { color: var(--dsw-alias-label-tertiary); }
-.qc-d-footbtns { display: inline-flex; gap: 10px; align-items: center; }
-
-/* ---- 设置表单（v2 重设计） ---- */
-.qc-settings { display: flex; flex-direction: column; gap: 6px; }
-.qc-s-group {
-  display: flex; flex-direction: column; gap: 10px;
-  padding: 12px; border-radius: var(--dsw-radius-md, 8px);
-  background: var(--dsw-alias-interactive-bg-hover);
+.qc-d-footbtns { display: inline-flex; gap: 6px; align-items: center; }
+.qc-d-settings {
+  width: 26px; height: 26px; padding: 0; border: none; border-radius: var(--dsw-radius-sm);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--dsw-alias-label-tertiary); background: transparent; cursor: pointer;
 }
-.qc-s-plain { padding-top: 10px; padding-bottom: 10px; }
-.qc-s-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+.qc-d-settings svg { width: 16px; height: 16px; }
+.qc-d-settings:hover { color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-interactive-bg-hover); }
+.qc-d-settings:focus-visible { outline: 2px solid var(--dsw-alias-focus-border, #4c9aff); outline-offset: 1px; }
+
+/* ---- 设置表单：原版 QuotaCat 的分组层级，DSH 的材质与控件 ---- */
+.qc-settings { display: flex; flex-direction: column; gap: 14px; min-width: 300px; }
+.qc-s-section { display: flex; flex-direction: column; gap: 6px; }
+.qc-s-section-label {
+  padding: 0 2px; color: var(--dsw-alias-label-tertiary);
+  font-size: 10px; font-weight: 600; letter-spacing: .04em;
+}
+.qc-s-surface {
+  overflow: hidden; border: .5px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md, 8px);
+  background: color-mix(in srgb, var(--dsw-specific-menu) 92%, var(--dsw-alias-label-primary) 8%);
+}
+.qc-s-row {
+  min-height: 38px; box-sizing: border-box; padding: 8px 10px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 104px;
+  align-items: center; gap: 12px; white-space: nowrap;
 }
 .qc-s-name {
   color: var(--dsw-alias-label-primary); font-size: 12px; font-weight: 500;
 }
 .qc-s-hint {
-  color: var(--dsw-alias-label-tertiary); font-size: 11px;
-  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary); font-size: 10px; line-height: 15px;
 }
-.qc-s-options { display: flex; flex-wrap: wrap; gap: 6px; }
-.qc-s-option {
-  font: inherit; font-size: 11px; cursor: pointer; padding: 4px 12px;
-  color: var(--dsw-alias-label-tertiary);
-  background: var(--dsw-specific-menu, transparent);
-  border: 1px solid var(--dsw-alias-border-l2); border-radius: 999px;
-  transition: all .12s ease;
+.qc-s-select {
+  width: 104px; min-width: 0; box-sizing: border-box; justify-self: end;
+  color: var(--dsw-alias-label-secondary); background: var(--dsw-specific-menu);
+  border: .5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm);
+  font: inherit; font-size: 11px; padding: 4px 7px; outline: none;
 }
-.qc-s-option:hover { color: var(--dsw-alias-label-secondary); }
-.qc-s-option.is-active {
-  color: var(--dsw-alias-label-primary);
-  border-color: var(--dsw-alias-focus-border, var(--dsw-alias-label-secondary));
-  background: var(--dsw-alias-interactive-bg-active, var(--dsw-alias-interactive-bg-hover));
-  font-weight: 500;
+.qc-s-select:focus-visible,
+.qc-switch:focus-visible,
+.qc-s-range:focus-visible,
+.qc-s-action:focus-visible {
+  outline: 2px solid var(--dsw-alias-focus-border, #4c9aff); outline-offset: 2px;
+}
+.qc-s-select:disabled { opacity: .55; }
+.qc-s-threshold {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 10px; border-top: .5px solid var(--dsw-alias-border-l2);
+}
+.qc-s-threshold-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.qc-s-value {
+  color: var(--dsw-alias-label-secondary); font-size: 11px;
+  font-weight: 600; font-variant-numeric: tabular-nums;
 }
 /* iOS 风格开关 */
 .qc-switch {
   position: relative; width: 34px; height: 20px; flex: none;
+  justify-self: end;
   border-radius: 999px; border: none; cursor: pointer; padding: 0;
   background: var(--dsw-alias-border-l2);
   transition: background .15s ease;
@@ -133,34 +154,29 @@ button.qc-pill[aria-expanded="true"] { background: var(--dsw-alias-interactive-b
   cursor: pointer; transition: transform .1s ease;
 }
 .qc-s-range::-webkit-slider-thumb:hover { transform: scale(1.15); }
-.qc-s-slider { display: flex; flex-direction: column; gap: 6px; }
-.qc-s-slider-marks {
-  display: flex; justify-content: space-between;
-  font-size: 10px; color: var(--dsw-alias-label-tertiary); opacity: .7;
+.qc-s-actions {
+  min-height: 30px; display: flex; align-items: center;
+  justify-content: flex-end; gap: 10px;
 }
-.qc-s-slider-marks .is-on { opacity: 1; color: var(--dsw-alias-label-secondary); }
-.qc-s-slider-now { font-weight: 600; font-variant-numeric: tabular-nums; }
-/* 状态徽章 */
-.qc-s-badge {
-  font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 999px;
-  font-variant-numeric: tabular-nums;
-}
-.qc-s-badge.is-ok {
-  color: #22c55e; background: color-mix(in srgb, #22c55e 12%, transparent);
-}
-.qc-s-badge.is-warn {
-  color: #eab308; background: color-mix(in srgb, #eab308 12%, transparent);
-}
-/* 主按钮 */
-.qc-s-save {
+.qc-s-feedback { color: #22c55e; font-size: 10px; margin-right: auto; }
+.qc-s-feedback.is-error { color: #ef4444; }
+.qc-s-action {
   font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
-  padding: 7px 0; width: 100%; margin-top: 2px;
-  color: #fff; border: none; border-radius: var(--dsw-radius-md, 8px);
+  min-width: 64px; padding: 6px 12px; border-radius: var(--dsw-radius-sm);
+}
+.qc-s-cancel {
+  color: var(--dsw-alias-label-secondary); border: .5px solid var(--dsw-alias-border-l2);
+  background: transparent;
+}
+.qc-s-cancel:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.qc-s-save {
+  min-width: 76px;
+  color: #fff; border: none; border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-focus-border, #4c9aff);
   transition: filter .12s ease;
 }
 .qc-s-save:hover:not(:disabled) { filter: brightness(1.08); }
-.qc-s-save:disabled { opacity: 0.55; cursor: default; }
+.qc-s-action:disabled { opacity: 0.55; cursor: default; }
 
 /* ---- 阈值提醒横幅 ---- */
 .qc-d-alert {

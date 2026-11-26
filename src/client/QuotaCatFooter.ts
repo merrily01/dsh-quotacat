@@ -1,9 +1,11 @@
 // composer.dock 统计条上的额度 pill。
 // 详情面板 portal 到 body，从 pill 左边缘向右展开，并在视口边缘内收。
 
-import { getReact, getReactDOM, tryRequire } from './runtime'
-import { placePanel } from './anchoredPosition'
-import { fetchReport, fetchSettings, saveSettings, fetchStatus, type Model, type Settings } from './model'
+import { getReact, getReactDOM, tryRequire } from './runtime.ts'
+import { placePanel } from './anchoredPosition.ts'
+import { fetchReport, fetchSettings, saveSettings, fetchStatus, type Model, type Settings } from './model.ts'
+import { OPEN_QUOTA_EVENT } from './events.ts'
+export { advanceThresholdLatch } from './thresholdLatch.ts'
 
 const prim = tryRequire('@deepseek-ai/dsh-client-ui-primitives')
 
@@ -49,6 +51,19 @@ function GaugeIcon(): any {
   )
 }
 
+function SettingsIcon(): any {
+  const React = getReact()
+  return React.createElement(
+    'svg',
+    { viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true' },
+    React.createElement('path', {
+      d: 'M8.8 4.32h2.4l.44 1.72c.34.13.67.32.96.55l1.7-.5 1.2 2.08-1.27 1.22c.03.2.05.4.05.61s-.02.42-.05.62l1.27 1.22-1.2 2.08-1.7-.5c-.29.23-.62.42-.96.55l-.44 1.72H8.8l-.44-1.72a4.6 4.6 0 0 1-.96-.55l-1.7.5-1.2-2.08 1.27-1.22a3.8 3.8 0 0 1 0-1.23L4.5 8.17l1.2-2.08 1.7.5c.29-.23.62-.42.96-.55l.44-1.72Z',
+      stroke: 'currentColor', strokeWidth: 1.4, strokeLinejoin: 'round',
+    }),
+    React.createElement('circle', { cx: 10, cy: 10, r: 2.05, stroke: 'currentColor', strokeWidth: 1.4 }),
+  )
+}
+
 export function QuotaCatFooter(_props: { t: (key: string) => string }): any {
   const React = getReact()
   const { useState, useEffect, useLayoutEffect, useRef } = React
@@ -66,6 +81,8 @@ export function QuotaCatFooter(_props: { t: (key: string) => string }): any {
 
   useEffect(() => {
     let alive = true
+    let reportTimer: ReturnType<typeof setInterval> | undefined
+    let reportIntervalMs = 5 * 60_000
     const loadReport = () => {
       fetchReport(false)
         .then((m) => { if (alive) setModel(m) })
@@ -81,18 +98,36 @@ export function QuotaCatFooter(_props: { t: (key: string) => string }): any {
           const stale = s.activeFresh === false
           const provider = recent[0]?.provider ?? (stale ? undefined : s.activeProvider)
           setActive({ provider, model: stale ? undefined : s.activeModel })
+          // 数据轮询跟随 host 配置的刷新频率（缺省 5 分钟，下限 15 秒防打爆）
+          const minutes = Math.max(0.25, s.refreshMinutes ?? 5)
+          const next = minutes * 60_000
+          if (next !== reportIntervalMs) {
+            reportIntervalMs = next
+            if (reportTimer !== undefined) clearInterval(reportTimer)
+            reportTimer = setInterval(loadReport, next)
+          }
         })
         .catch(() => {})
     }
     loadReport()
     loadStatus()
-    const t1 = setInterval(loadReport, 5 * 60_000)
+    reportTimer = setInterval(loadReport, reportIntervalMs)
     const t2 = setInterval(loadStatus, 15 * 1000)
     return () => {
       alive = false
-      clearInterval(t1)
+      if (reportTimer !== undefined) clearInterval(reportTimer)
       clearInterval(t2)
     }
+  }, [])
+
+  useEffect(() => {
+    const openQuota = () => {
+      setView('quota')
+      setPos(undefined)
+      setOpen(true)
+    }
+    window.addEventListener(OPEN_QUOTA_EVENT, openQuota)
+    return () => window.removeEventListener(OPEN_QUOTA_EVENT, openQuota)
   }, [])
 
   // Esc / 点击外部关闭
@@ -216,8 +251,8 @@ function Switch(props: { checked: boolean; onChange: (v: boolean) => void, label
   )
 }
 
-/** 设置表单。密钥全自动获取（宿主登录凭据/环境变量），用户无需感知。 */
-function SettingsForm(props: { onDone: () => void }): any {
+/** 设置表单。密钥随宿主自动获取，因此这里只呈现用户可操作项。 */
+export function SettingsForm(props: { onCancel: () => void, onSaved: () => void }): any {
   const React = getReact()
   const { useState, useEffect } = React
 
@@ -227,6 +262,7 @@ function SettingsForm(props: { onDone: () => void }): any {
   const [threshold, setThreshold] = useState(0.8)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -240,10 +276,22 @@ function SettingsForm(props: { onDone: () => void }): any {
     return () => { alive = false }
   }, [])
 
+  useEffect(() => {
+    if (!saved) return
+    const timer = setTimeout(() => setSaved(false), 1600)
+    return () => clearTimeout(timer)
+  }, [saved])
+
+  const markChanged = () => {
+    setSaved(false)
+    setSaveError(false)
+  }
+
   const save = () => {
     if (saving) return
     setSaving(true)
     setSaved(false)
+    setSaveError(false)
     saveSettings({
       refreshMinutes,
       notificationEnabled: notify,
@@ -252,45 +300,60 @@ function SettingsForm(props: { onDone: () => void }): any {
       setSaving(false)
       if (r.ok) {
         setSaved(true)
-        props.onDone()
+        props.onSaved()
+      } else {
+        setSaveError(true)
       }
-    }).catch(() => setSaving(false))
+    }).catch(() => {
+      setSaving(false)
+      setSaveError(true)
+    })
   }
-
-  const keyReady = info?.key !== undefined && info.key.source !== 'none'
 
   return React.createElement(
     'div', { className: 'qc-settings' },
     // ---- 刷新频率 ----
-    React.createElement('div', { className: 'qc-s-group' },
-      React.createElement('div', { className: 'qc-s-head' },
-        React.createElement('span', { className: 'qc-s-name' }, '自动刷新'),
-        React.createElement('span', { className: 'qc-s-hint' },
-          refreshMinutes === 0 ? '仅按需' : `每 ${refreshMinutes} 分钟`),
-      ),
-      React.createElement('div', { className: 'qc-s-options' },
-        REFRESH_OPTIONS.map((o) =>
-          React.createElement('button', {
-            key: o.minutes,
-            className: `qc-s-option${refreshMinutes === o.minutes ? ' is-active' : ''}`,
-            type: 'button',
-            onClick: () => setRefreshMinutes(o.minutes),
-          }, o.label),
+    React.createElement('section', { className: 'qc-s-section' },
+      React.createElement('div', { className: 'qc-s-section-label' }, '刷新'),
+      React.createElement('div', { className: 'qc-s-surface' },
+        React.createElement('label', { className: 'qc-s-row' },
+          React.createElement('span', { className: 'qc-s-name' }, '自动刷新'),
+          React.createElement('select', {
+            className: 'qc-s-select',
+            value: refreshMinutes,
+            disabled: info === undefined,
+            'aria-label': '自动刷新频率',
+            onChange: (e: any) => {
+              setRefreshMinutes(Number(e.target.value))
+              markChanged()
+            },
+          }, REFRESH_OPTIONS.map((o) =>
+            React.createElement('option', { key: o.minutes, value: o.minutes }, o.label),
+          )),
         ),
       ),
     ),
     // ---- 阈值提醒 ----
-    React.createElement('div', { className: 'qc-s-group' },
-      React.createElement('div', { className: 'qc-s-head' },
-        React.createElement('span', { className: 'qc-s-name' }, '额度阈值提醒'),
-        React.createElement(Switch, {
-          checked: notify,
-          onChange: setNotify,
-          label: '额度阈值提醒',
-        }),
-      ),
-      notify
-        ? React.createElement('div', { className: 'qc-s-slider' },
+    React.createElement('section', { className: 'qc-s-section' },
+      React.createElement('div', { className: 'qc-s-section-label' }, '通知'),
+      React.createElement('div', { className: 'qc-s-surface' },
+        React.createElement('div', { className: 'qc-s-row' },
+          React.createElement('span', { className: 'qc-s-name' }, '额度阈值提醒'),
+          React.createElement(Switch, {
+            checked: notify,
+            onChange: (value: boolean) => {
+              setNotify(value)
+              markChanged()
+            },
+            label: '额度阈值提醒',
+          }),
+        ),
+        notify
+          ? React.createElement('div', { className: 'qc-s-threshold' },
+            React.createElement('div', { className: 'qc-s-threshold-head' },
+              React.createElement('span', { className: 'qc-s-name' }, '触发阈值'),
+              React.createElement('span', { className: 'qc-s-value' }, `${Math.round(threshold * 100)}%`),
+            ),
             React.createElement('input', {
               className: 'qc-s-range',
               type: 'range',
@@ -298,38 +361,38 @@ function SettingsForm(props: { onDone: () => void }): any {
               max: 0.95,
               step: 0.05,
               value: threshold,
-              onChange: (e: any) => setThreshold(Number(e.target.value)),
+              'aria-label': '额度提醒触发阈值',
+              onChange: (e: any) => {
+                setThreshold(Number(e.target.value))
+                markChanged()
+              },
               style: { '--qc-range-fill': `${((threshold - 0.5) / 0.45) * 100}%` } as any,
             }),
-            React.createElement(
-              'div', { className: 'qc-s-slider-marks' },
-              React.createElement('span', { className: threshold <= 0.52 ? 'is-on' : undefined }, '50%'),
-              React.createElement('span', { className: 'is-on qc-s-slider-now' }, `${Math.round(threshold * 100)}%`),
-              React.createElement('span', { className: threshold >= 0.93 ? 'is-on' : undefined }, '95%'),
-            ),
-            React.createElement('div', { className: 'qc-s-hint' }, '5h 用量达到阈值时提醒一次，回落到阈值下方后恢复'),
+            React.createElement('div', { className: 'qc-s-hint' }, '5h 用量达到阈值时提醒一次，回落后可再次触发'),
           )
-        : null,
-    ),
-    // ---- 数据来源（只读，密钥全自动） ----
-    React.createElement('div', { className: 'qc-s-group qc-s-plain' },
-      React.createElement('div', { className: 'qc-s-head' },
-        React.createElement('span', { className: 'qc-s-name' }, '数据来源'),
-        React.createElement('span', { className: `qc-s-badge${keyReady ? ' is-ok' : ' is-warn'}` },
-          keyReady ? '已连接' : '未连接'),
+          : null,
       ),
-      React.createElement('div', { className: 'qc-s-hint' }, 'GLM Coding Plan 凭据随宿主自动获取，无需手动配置'),
     ),
-    // ---- 保存 ----
-    React.createElement('button', {
-      className: 'qc-s-save', type: 'button',
-      disabled: saving || info === undefined,
-      onClick: save,
-    }, saving ? '保存中…' : saved ? '已保存 ✓' : '保存'),
+    React.createElement('div', { className: 'qc-s-actions' },
+      React.createElement('span', {
+        className: `qc-s-feedback${saveError ? ' is-error' : ''}`,
+        role: 'status',
+      }, saved ? '已保存' : saveError ? '保存失败，请重试' : ''),
+      React.createElement('button', {
+        className: 'qc-s-action qc-s-cancel', type: 'button',
+        disabled: saving,
+        onClick: props.onCancel,
+      }, '取消'),
+      React.createElement('button', {
+        className: 'qc-s-action qc-s-save', type: 'button',
+        disabled: saving || info === undefined,
+        onClick: save,
+      }, saving ? '保存中…' : '保存更改'),
+    ),
   )
 }
 
-function renderDialog(
+export function renderDialog(
   React: typeof import('react'),
   model: Model,
   dim: boolean,
@@ -403,7 +466,10 @@ function renderDialog(
         : '—'
 
   const body = view === 'settings'
-    ? React.createElement(SettingsForm, { onDone: () => setView('quota') })
+    ? React.createElement(SettingsForm, {
+        onCancel: () => setView('quota'),
+        onSaved: () => setView('quota'),
+      })
     : React.createElement(
         'div',
         null,
@@ -436,24 +502,25 @@ function renderDialog(
     ),
     React.createElement('div', { className: 'qc-d-rule', 'aria-hidden': true }),
     body,
-    React.createElement(
-      'div',
-      { className: 'qc-d-foot' },
-      React.createElement('span', null, view === 'quota' && r !== undefined ? `更新于 ${new Date(r.fetchedAt).toLocaleTimeString()}` : ''),
-      view === 'settings'
-        ? React.createElement('button', { className: 'qc-d-refresh', onClick: () => setView('quota') }, '返回')
-        : React.createElement(
+    view === 'quota'
+      ? React.createElement(
+          'div',
+          { className: 'qc-d-foot' },
+          React.createElement('span', null, r !== undefined ? `更新于 ${new Date(r.fetchedAt).toLocaleTimeString()}` : ''),
+          React.createElement(
             'span',
             { className: 'qc-d-footbtns' },
+            React.createElement('button', { className: 'qc-d-action qc-d-refresh', onClick: refresh },
+              model.loading === true ? '刷新中…' : '刷新'),
             React.createElement('button', {
-              className: 'qc-d-refresh',
+              className: 'qc-d-action qc-d-settings',
+              type: 'button',
               title: '设置',
               'aria-label': '设置',
               onClick: () => setView('settings'),
-            }, '⚙'),
-            React.createElement('button', { className: 'qc-d-refresh', onClick: refresh },
-              model.loading === true ? '刷新中…' : '刷新'),
+            }, SettingsIcon()),
           ),
-    ),
+        )
+      : null,
   )
 }

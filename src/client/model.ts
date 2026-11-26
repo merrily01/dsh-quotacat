@@ -1,6 +1,6 @@
 // 面板数据模型：fetch 宿主 HTTP API。
 
-import { API, type ReportResponse, type UsageReport } from '../shared/api'
+import { API, type ReportResponse, type UsageReport } from '../shared/api.ts'
 
 export interface Model {
   loading?: boolean
@@ -20,6 +20,8 @@ export interface StatusInfo {
   activeSupported?: boolean
   /** activeProvider 是否在 30 分钟新鲜窗口内；false 时客户端不据此变暗 */
   activeFresh?: boolean
+  /** host 配置的自动刷新间隔（分钟）；客户端轮询跟随此频率 */
+  refreshMinutes?: number
   /** 各会话最近 10 分钟内对话调用的 provider，按时间倒序 */
   recent?: Array<{ provider: string; at: number }>
 }

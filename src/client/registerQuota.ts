@@ -25,3 +25,21 @@ export function registerQuota(
     ),
   )
 }
+
+export function registerQuotaToast(
+  ctx: {
+    slots: {
+      inject(name: string, factory: () => unknown): void
+      register(descriptor: { name: string; id: string }, render: () => unknown): unknown
+    }
+  },
+  React: Pick<typeof import('react'), 'createElement'>,
+  ToastComponent: import('react').ComponentType,
+): void {
+  ctx.slots.inject('shell.overlay', () =>
+    ctx.slots.register(
+      { name: 'shell.overlay', id: 'dsh-quotacat.threshold-toast' },
+      () => React.createElement(ToastComponent),
+    ),
+  )
+}

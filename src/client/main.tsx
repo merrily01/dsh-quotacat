@@ -4,8 +4,9 @@ import { getReact } from './runtime'
 import type { ClientContext } from './types'
 import { NS, zh, en } from './i18n'
 import { ensureCss } from './styles'
-import { registerQuota } from './registerQuota'
+import { registerQuota, registerQuotaToast } from './registerQuota'
 import { QuotaCatFooter } from './QuotaCatFooter'
+import { QuotaAlertToast } from './QuotaAlertToast'
 
 export const inject = ['slots', 'locale']
 
@@ -17,4 +18,5 @@ export function apply(ctx: ClientContext): void {
 
   ensureCss()
   registerQuota(ctx, t, React, QuotaCatFooter)
+  registerQuotaToast(ctx, React, QuotaAlertToast)
 }

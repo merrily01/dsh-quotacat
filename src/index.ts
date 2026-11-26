@@ -7,7 +7,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { fetchGlmUsage, fetchGlmToolUsage, QuotaCatError, type ToolUsage24h } from './glm'
+import { fetchGlmUsage, fetchGlmToolUsage, QuotaCatError, type ToolUsage24h } from './glm.ts'
 import './server-types.d.ts'
 import {
   API,
@@ -15,7 +15,9 @@ import {
   type SettingsInfo,
   type ThresholdAlert,
   type UsageReport,
-} from './shared/api'
+} from './shared/api.ts'
+import { canPersistPluginSettings, persistPluginSettings } from './settingsPersistence.ts'
+export { Config } from './config.ts'
 
 export const name = 'dsh-quotacat'
 export const inject = ['webServer', 'tools']
@@ -27,19 +29,29 @@ interface CredentialsService {
   unset?(ref: never): Promise<void>
 }
 
-interface ConfigEditorService {
-  edit(entry: unknown, mutate: (current: Record<string, unknown>) => Record<string, unknown>): Promise<unknown>
-}
-
 /** 依次尝试从宿主 credentials 服务解析这些凭据名（DSH 登录 GLM Coding Plan 时自动存入）。 */
 const CREDENTIAL_REFS = ['QUOTACAT_API_KEY', 'GLM_API_KEY', 'ZAI_CODING_CN_API_KEY']
 
 interface Config {
   apiKey?: string
-  refreshMinutes?: number
+  refreshMinutes?: number | LiveConfig<number>
   baseURL?: string
-  notificationEnabled?: boolean
-  notificationThreshold?: number
+  notificationEnabled?: boolean | LiveConfig<boolean>
+  notificationThreshold?: number | LiveConfig<number>
+}
+
+interface LiveConfig<T> {
+  get(): T
+}
+
+function isLiveConfig<T>(value: unknown): value is LiveConfig<T> {
+  return typeof value === 'object' && value !== null && 'get' in value && typeof value.get === 'function'
+}
+
+function liveValue<T>(value: T | LiveConfig<T> | undefined, fallback: T): T {
+  return isLiveConfig<T>(value)
+    ? value.get()
+    : (value as T | undefined) ?? fallback
 }
 
 interface State {
@@ -84,11 +96,13 @@ function disposeOnStop(ctx: Context, disposer: (() => void) | void): void {
 export function apply(ctx: Context, config: Config): void {
   const logger = ctx.logger(name)
   const cfg = {
-    apiKey: config.apiKey ?? '',
-    refreshMinutes: config.refreshMinutes ?? 10,
-    baseURL: config.baseURL ?? 'https://open.bigmodel.cn',
-    notificationEnabled: config.notificationEnabled ?? true,
-    notificationThreshold: Math.min(Math.max(config.notificationThreshold ?? 0.8, 0.5), 0.95),
+    get apiKey() { return config.apiKey ?? '' },
+    get refreshMinutes() { return liveValue(config.refreshMinutes, 10) },
+    get baseURL() { return config.baseURL ?? 'https://open.bigmodel.cn' },
+    get notificationEnabled() { return liveValue(config.notificationEnabled, true) },
+    get notificationThreshold() {
+      return Math.min(Math.max(liveValue(config.notificationThreshold, 0.8), 0.5), 0.95)
+    },
   }
   const state: State = { fetchedAt: 0 }
 
@@ -293,15 +307,27 @@ export function apply(ctx: Context, config: Config): void {
     }
   }
 
-  // 定时刷新（refreshMinutes=0 关闭）；不用 ctx.setInterval 以避免宿主接口差异
-  if (cfg.refreshMinutes > 0) {
-    const timer = setInterval(() => {
-      void refreshOnce()
-    }, cfg.refreshMinutes * 60_000)
-    ctx.effect(() => () => clearInterval(timer))
-    // 启动时先拉一次
-    void refreshOnce()
+  // 定时刷新（refreshMinutes=0 关闭）；volatile 配置变化时重排下一次刷新。
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined
+  const scheduleRefresh = (): void => {
+    if (refreshTimer !== undefined) clearTimeout(refreshTimer)
+    refreshTimer = undefined
+    const minutes = cfg.refreshMinutes
+    if (minutes <= 0) return
+    refreshTimer = setTimeout(() => {
+      void refreshOnce().finally(scheduleRefresh)
+    }, minutes * 60_000)
   }
+  scheduleRefresh()
+  if (cfg.refreshMinutes > 0) void refreshOnce()
+  const loaderEvents = ctx as unknown as { on(event: string, listener: () => void): unknown }
+  loaderEvents.on('loader/volatile-update', () => {
+    scheduleRefresh()
+    updateThresholdState()
+  })
+  ctx.effect(() => () => {
+    if (refreshTimer !== undefined) clearTimeout(refreshTimer)
+  })
 
   // ---- HTTP 路由 ----
   disposeOnStop(ctx, ctx.webServer.register({
@@ -353,6 +379,7 @@ export function apply(ctx: Context, config: Config): void {
         activeModel,
         activeSupported: isActiveSupported(),
         activeFresh: lastEventAt > 0 && Date.now() - lastEventAt <= FRESH_MS,
+        refreshMinutes: cfg.refreshMinutes,
         recent: recentProviders(),
         listening,
         seen: [...seenProviders.entries()].map(([provider, v]) => ({ provider, ...v })),
@@ -363,18 +390,6 @@ export function apply(ctx: Context, config: Config): void {
   }))
 
   // ---- 设置路由 ----
-
-  /** 现取 configEditor（profile 可能未提供该服务）。 */
-  function getConfigEditor(): ConfigEditorService | undefined {
-    try {
-      const svc = typeof ctx.get === 'function' ? ctx.get('configEditor') : undefined
-      return svc !== null && svc !== undefined && typeof (svc as ConfigEditorService).edit === 'function'
-        ? (svc as ConfigEditorService)
-        : undefined
-    } catch {
-      return undefined
-    }
-  }
 
   /** 密钥当前来源（不回传明文）。 */
   async function describeKey(): Promise<SettingsInfo['key']> {
@@ -422,7 +437,7 @@ export function apply(ctx: Context, config: Config): void {
           notificationEnabled: cfg.notificationEnabled,
           notificationThreshold: cfg.notificationThreshold,
           key,
-          editable: getConfigEditor() !== undefined,
+          editable: canPersistPluginSettings(ctx),
         } satisfies SettingsInfo)
         return
       }
@@ -487,31 +502,19 @@ export function apply(ctx: Context, config: Config): void {
         notificationThreshold = Math.round(t * 20) / 20
       }
 
-      // 执行
-      const editor = getConfigEditor()
-      const entry = (ctx as { fiber?: { entry?: unknown } }).fiber?.entry
+      const patch: Record<string, unknown> = {}
+      if (refreshMinutes !== undefined) patch.refreshMinutes = refreshMinutes
+      if (baseURL !== undefined) patch.baseURL = baseURL
+      if (notificationEnabled !== undefined) patch.notificationEnabled = notificationEnabled
+      if (notificationThreshold !== undefined) patch.notificationThreshold = notificationThreshold
 
-      // 普通字段：先响应再写（普通字段变更会重启插件，可能中断本请求）
-      const configDirty =
-        refreshMinutes !== undefined ||
-        baseURL !== undefined ||
-        notificationEnabled !== undefined ||
-        notificationThreshold !== undefined
-      sendJson(res, 200, { ok: true })
-
-      if (configDirty && editor !== undefined && entry !== undefined) {
-        // 稍作延迟，让响应先落盘
-        const timer = setTimeout(() => {
-          void editor.edit(entry, (c) => {
-            const next = { ...c }
-            if (refreshMinutes !== undefined) next.refreshMinutes = refreshMinutes
-            if (baseURL !== undefined) next.baseURL = baseURL
-            if (notificationEnabled !== undefined) next.notificationEnabled = notificationEnabled
-            if (notificationThreshold !== undefined) next.notificationThreshold = notificationThreshold
-            return next
-          }).catch((e: Error) => logger.warn('save settings failed: %s', e.message))
-        }, 50)
-        ctx.effect(() => () => clearTimeout(timer))
+      try {
+        await persistPluginSettings(ctx, patch)
+        sendJson(res, 200, { ok: true })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        logger.warn('save settings failed: %s', message)
+        sendJson(res, 500, { ok: false, error: message })
       }
     },
   }))
