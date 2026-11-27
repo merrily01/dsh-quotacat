@@ -189,11 +189,31 @@ export function QuotaCatFooter(_props: { t: (key: string) => string }): any {
 
   const fiveHour = model.report?.windows.find((w) => w.kind === 'fiveHourTokens')
   const pct = fiveHour !== undefined ? Math.round(fiveHour.percentage * 100) : undefined
-  const dim = !isGlmLike(active.provider)
+  const isDeepseek = active.provider !== undefined && /deepseek/i.test(active.provider)
+  const dsBalance = model.deepseek?.balance
+  // DeepSeek 活跃且有余额数据 → 显示余额；有 key 但查询失败也保持高亮并显示错误；
+  // 未配置 key → 置灰
+  const dim = isDeepseek
+    ? model.deepseek === undefined
+    : !isGlmLike(active.provider)
 
-  const pillText = dim
-    ? '额度'
-    : '额度'
+  const pillValue = isDeepseek
+    ? dsBalance !== undefined
+      ? `${dsBalance.totalBalance.toFixed(2)} ${dsBalance.currency === 'CNY' ? '¥' : dsBalance.currency}`
+      : undefined
+    : pct !== undefined
+      ? `${pct}%`
+      : undefined
+  const pillValueColor = isDeepseek ? 'inherit' : severity(pct ?? 0)
+  const pillTitle = isDeepseek
+    ? dim
+      ? 'DeepSeek API key 未配置（余额监控未启用）'
+      : dsBalance !== undefined
+        ? `DeepSeek API 余额 ${pillValue}`
+        : `DeepSeek 查询中/失败：${model.deepseek?.error ?? ''}`
+    : dim
+      ? `当前模型 ${active.model ?? active.provider ?? ''} 暂无额度服务`
+      : `GLM 5 小时窗口 ${pct ?? '—'}%`
 
   const toggle = () => {
     setOpen((v: boolean) => {
@@ -216,13 +236,13 @@ export function QuotaCatFooter(_props: { t: (key: string) => string }): any {
         style: dim ? { opacity: 0.55 } : undefined,
         'aria-haspopup': 'dialog',
         'aria-expanded': open,
-        title: dim ? `当前模型 ${active.model ?? active.provider ?? ''} 暂无额度服务` : `GLM 5 小时窗口 ${pct ?? '—'}%`,
+        title: pillTitle,
         onClick: toggle,
       },
       GaugeIcon(),
-      React.createElement('span', { className: 'qc-pill-label' }, pillText),
-      !dim && pct !== undefined
-        ? React.createElement('span', { className: 'qc-pill-value', style: { color: severity(pct) } }, `${pct}%`)
+      React.createElement('span', { className: 'qc-pill-label' }, '额度'),
+      !dim && pillValue !== undefined
+        ? React.createElement('span', { className: 'qc-pill-value', style: { color: pillValueColor } }, pillValue)
         : null,
     ),
     open && getReactDOM().createPortal(
@@ -415,6 +435,28 @@ export function renderDialog(
 ): any {
   const r = model.report
   const rows: any[] = []
+
+  // DeepSeek API 余额（有数据或错误时始终展示，与当前模型无关）
+  const ds = model.deepseek
+  if (ds !== undefined) {
+    if (ds.balance !== undefined) {
+      rows.push(
+        React.createElement('dt', { key: 'ds-b' }, 'DeepSeek 余额'),
+        React.createElement('dd', { key: 'ds-bv' }, `${ds.balance.totalBalance.toFixed(2)} ${ds.balance.currency}`),
+        React.createElement('dt', { key: 'ds-g' }, '· 赠送金'),
+        React.createElement('dd', { key: 'ds-gv' }, ds.balance.grantBalance.toFixed(2)),
+        ...(ds.balance.isAvailable ? [] : [
+          React.createElement('dt', { key: 'ds-a' }, '状态'),
+          React.createElement('dd', { key: 'ds-av' }, '不可用'),
+        ]),
+      )
+    } else if (ds.error !== undefined) {
+      rows.push(
+        React.createElement('dt', { key: 'ds-e' }, 'DeepSeek'),
+        React.createElement('dd', { key: 'ds-ev' }, `查询失败：${ds.error.slice(0, 40)}`),
+      )
+    }
+  }
 
   if (dim) {
     rows.push(

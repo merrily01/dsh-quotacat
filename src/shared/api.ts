@@ -48,6 +48,8 @@ export interface ReportResponse {
   report?: UsageReport
   /** 近 24 小时 MCP 工具调用（独立接口，失败时省略） */
   toolUsage24h?: ToolUsage24h
+  /** DeepSeek API 余额（未配置 key 时省略） */
+  deepseek?: DeepseekInfo
   /** 阈值提醒状态（5h 窗口用量达到阈值时 triggered=true，回落到阈值下方后自动复位） */
   threshold?: ThresholdAlert
 }
@@ -68,6 +70,17 @@ export interface ToolUsage24h {
   zreadCalls: number
 }
 
+/** DeepSeek API 余额信息（API key 计费账户）。 */
+export interface DeepseekInfo {
+  balance?: {
+    isAvailable: boolean
+    currency: string
+    totalBalance: number
+    grantBalance: number
+  }
+  error?: string
+}
+
 /** GET /settings 返回：设置项当前值（不含密钥明文） */
 export interface SettingsInfo {
   ok: boolean
@@ -78,10 +91,10 @@ export interface SettingsInfo {
   notificationEnabled: boolean
   /** 阈值 [0.5, 0.95] */
   notificationThreshold: number
-  /** 密钥状态：来自 config.apiKey 或宿主 credentials */
+  /** 密钥状态：来自宿主 credentials 或环境变量 */
   key?: {
-    /** 'credentials' = 宿主凭据存储；'config' = 插件配置；'env' = 环境变量；'none' = 未配置 */
-    source: 'credentials' | 'config' | 'env' | 'none'
+    /** 'credentials' = 宿主凭据存储；'env' = 环境变量；'none' = 未配置 */
+    source: 'credentials' | 'env' | 'none'
     /** credentials 服务返回的掩码预览（如 sk-12…ef，可选） */
     masked?: string
   }

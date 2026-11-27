@@ -8,6 +8,7 @@ export interface Model {
   error?: string
   report?: UsageReport
   toolUsage24h?: import('../shared/api').ToolUsage24h
+  deepseek?: import('../shared/api').DeepseekInfo
   /** 阈值提醒状态 */
   threshold?: import('../shared/api').ThresholdAlert
 }

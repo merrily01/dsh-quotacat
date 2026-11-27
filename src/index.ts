@@ -8,6 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { fetchGlmUsage, fetchGlmToolUsage, QuotaCatError, type ToolUsage24h } from './glm.ts'
+import { fetchDeepseekBalance, type DeepseekBalance } from './deepseek.ts'
 import './server-types.d.ts'
 import {
   API,
@@ -32,8 +33,10 @@ interface CredentialsService {
 /** 依次尝试从宿主 credentials 服务解析这些凭据名（DSH 登录 GLM Coding Plan 时自动存入）。 */
 const CREDENTIAL_REFS = ['QUOTACAT_API_KEY', 'GLM_API_KEY', 'ZAI_CODING_CN_API_KEY']
 
+/** DeepSeek API 余额用的凭据名（API key 计费账户，非订阅登录）。 */
+const DEEPSEEK_CREDENTIAL_REFS = ['DEEPSEEK_API_KEY', 'DEEPSEEK_KEY']
+
 interface Config {
-  apiKey?: string
   refreshMinutes?: number | LiveConfig<number>
   baseURL?: string
   notificationEnabled?: boolean | LiveConfig<boolean>
@@ -62,6 +65,9 @@ interface State {
   inflight?: Promise<void>
   /** 阈值提醒是否已触发（回落到阈值下方后复位，避免重复打扰） */
   thresholdTriggered?: boolean
+  /** DeepSeek API 余额（未配置 key 时为 undefined，静默不启用） */
+  deepseek?: DeepseekBalance
+  deepseekError?: string
 }
 
 function sendJson(res: any, status: number, body: unknown): void {
@@ -96,7 +102,6 @@ function disposeOnStop(ctx: Context, disposer: (() => void) | void): void {
 export function apply(ctx: Context, config: Config): void {
   const logger = ctx.logger(name)
   const cfg = {
-    get apiKey() { return config.apiKey ?? '' },
     get refreshMinutes() { return liveValue(config.refreshMinutes, 10) },
     get baseURL() { return config.baseURL ?? 'https://open.bigmodel.cn' },
     get notificationEnabled() { return liveValue(config.notificationEnabled, true) },
@@ -209,7 +214,6 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   async function resolveKey(): Promise<string> {
-    if (cfg.apiKey.length > 0) return cfg.apiKey
     // 1) 宿主 credentials（DSH 当前登录的服务商 key，零配置）
     const credentials = getCredentials()
     if (credentials !== undefined) {
@@ -232,32 +236,59 @@ export function apply(ctx: Context, config: Config): void {
     )
   }
 
+  async function resolveDeepseekKey(): Promise<string> {
+    const credentials = getCredentials()
+    if (credentials !== undefined) {
+      for (const ref of DEEPSEEK_CREDENTIAL_REFS) {
+        try {
+          const resolved = await credentials.resolve(ref as never as never)
+          const value = resolved?.value
+          if (typeof value === 'string' && value.length > 0) return value
+        } catch {
+          // 继续尝试下一个
+        }
+      }
+    }
+    return process.env.DEEPSEEK_API_KEY || ''
+  }
+
   async function refresh(): Promise<void> {
-    const key = await resolveKey()
-    if (key.length === 0) {
+    const [key, deepseekKey] = await Promise.all([resolveKey(), resolveDeepseekKey()])
+    if (key.length === 0 && deepseekKey.length === 0) {
       state.error = undefined
       return
     }
-    try {
-      // 两个接口并行；tool-usage 失败不影响主报告
-      const [report, toolResult] = await Promise.all([
-        fetchGlmUsage(key, cfg.baseURL),
-        fetchGlmToolUsage(key, cfg.baseURL).then(
-          (t) => t,
-          () => undefined satisfies undefined as ToolUsage24h | undefined,
-        ),
-      ])
-      state.report = report
-      state.toolUsage24h = toolResult
-      state.fetchedAt = Date.now()
-      state.error = undefined
-      updateThresholdState()
-      logger.info('refreshed GLM usage')
-    } catch (e) {
-      const err = e as QuotaCatError
-      state.error = err.message
-      logger.warn('refresh failed: %s', err.message)
-    }
+    // GLM 报告与 DeepSeek 余额并行；各自失败互不影响
+    const glmTask = key.length > 0
+      ? fetchGlmUsage(key, cfg.baseURL)
+          .then(async (report) => {
+            state.report = report
+            state.toolUsage24h = await fetchGlmToolUsage(key, cfg.baseURL).then(
+              (t) => t,
+              () => undefined satisfies undefined as ToolUsage24h | undefined,
+            )
+          })
+          .catch((e: QuotaCatError) => {
+            state.error = e.message
+            logger.warn('GLM refresh failed: %s', e.message)
+          })
+      : Promise.resolve()
+    const deepseekTask = deepseekKey.length > 0
+      ? fetchDeepseekBalance(deepseekKey)
+          .then((b) => {
+            state.deepseek = b
+            state.deepseekError = undefined
+          })
+          .catch((e: QuotaCatError) => {
+            state.deepseekError = e.message
+            logger.warn('DeepSeek refresh failed: %s', e.message)
+          })
+      : Promise.resolve()
+    await Promise.all([glmTask, deepseekTask])
+    state.fetchedAt = Date.now()
+    if (key.length === 0) state.error = undefined
+    updateThresholdState()
+    logger.info('refreshed usage')
   }
 
   /** 阈值提醒状态机：达到阈值触发一次，回落到阈值下方后复位。 */
@@ -303,6 +334,9 @@ export function apply(ctx: Context, config: Config): void {
       error: state.error,
       report: state.report,
       toolUsage24h: state.toolUsage24h,
+      deepseek: state.deepseek === undefined && state.deepseekError === undefined
+        ? undefined
+        : { balance: state.deepseek, error: state.deepseekError },
       threshold: thresholdAlert(),
     }
   }
@@ -383,7 +417,6 @@ export function apply(ctx: Context, config: Config): void {
         recent: recentProviders(),
         listening,
         seen: [...seenProviders.entries()].map(([provider, v]) => ({ provider, ...v })),
-        configKey: cfg.apiKey.length > 0,
         baseURL: cfg.baseURL,
       })
     },
@@ -393,7 +426,6 @@ export function apply(ctx: Context, config: Config): void {
 
   /** 密钥当前来源（不回传明文）。 */
   async function describeKey(): Promise<SettingsInfo['key']> {
-    if (cfg.apiKey.length > 0) return { source: 'config', masked: `${cfg.apiKey.slice(0, 5)}…${cfg.apiKey.slice(-4)}` }
     const credentials = getCredentials()
     if (credentials !== undefined) {
       for (const ref of CREDENTIAL_REFS) {
@@ -544,20 +576,33 @@ export function apply(ctx: Context, config: Config): void {
         const resp = await buildResponse()
         if (resp.error !== undefined) return `查询失败：${resp.error}`
         const r = resp.report
-        if (r === undefined) return '暂无数据'
-        const lines = [
-          `GLM Coding Plan（${r.planTier}）· 更新于 ${new Date(r.fetchedAt).toLocaleString()}`,
-          ...r.windows.map((w) => {
-            const pct = `${Math.round(w.percentage * 100)}%`
-            const reset = w.resetsAt !== undefined ? `，重置于 ${new Date(w.resetsAt).toLocaleTimeString()}` : ''
-            const detail = w.kind === 'fiveHourTokens' ? `（已用 ${w.currentUsage}/${w.total} tokens）` : ''
-            const mcp = w.mcpToolBreakdown?.length
-              ? ` [${w.mcpToolBreakdown.map((m) => `${m.tool}:${m.count}`).join(', ')}]`
-              : ''
-            return `- ${w.label}：${pct}${detail}${reset}${mcp}`
-          }),
-        ]
-        return lines.join('\n')
+        const lines: string[] = []
+        if (r !== undefined) {
+          lines.push(
+            `GLM Coding Plan（${r.planTier}）· 更新于 ${new Date(r.fetchedAt).toLocaleString()}`,
+            ...r.windows.map((w) => {
+              const pct = `${Math.round(w.percentage * 100)}%`
+              const reset = w.resetsAt !== undefined ? `，重置于 ${new Date(w.resetsAt).toLocaleTimeString()}` : ''
+              const detail = w.kind === 'fiveHourTokens' ? `（已用 ${w.currentUsage}/${w.total} tokens）` : ''
+              const mcp = w.mcpToolBreakdown?.length
+                ? ` [${w.mcpToolBreakdown.map((m) => `${m.tool}:${m.count}`).join(', ')}]`
+                : ''
+              return `- ${w.label}：${pct}${detail}${reset}${mcp}`
+            }),
+          )
+        }
+        const ds = resp.deepseek
+        if (ds !== undefined) {
+          if (ds.balance !== undefined) {
+            const b = ds.balance
+            lines.push(
+              `DeepSeek API · 余额 ${b.totalBalance.toFixed(2)} ${b.currency}（含赠送 ${b.grantBalance.toFixed(2)}）${b.isAvailable ? '' : ' · 账户不可用'}`,
+            )
+          } else if (ds.error !== undefined) {
+            lines.push(`DeepSeek API · 查询失败：${ds.error}`)
+          }
+        }
+        return lines.length > 0 ? lines.join('\n') : '暂无数据'
       },
     }),
   )

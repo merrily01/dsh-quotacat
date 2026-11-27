@@ -1,6 +1,6 @@
 {
   "name": "dsh-quotacat",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "QuotaCat for DeepSeek Harness — LLM provider usage & quota monitoring: composer-dock pill, detail dialog, threshold alerts, and a quota agent tool. GLM Coding Plan supported today; more providers on the way.",
   "license": "MIT",
   "type": "module",
