@@ -47,5 +47,24 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "~3.18.4"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/merrily01/dsh-quotacat.git"
+  },
+  "homepage": "https://github.com/merrily01/dsh-quotacat",
+  "bugs": {
+    "url": "https://github.com/merrily01/dsh-quotacat/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "quota",
+    "usage",
+    "glm",
+    "monitoring",
+    "llm"
+  ]
 }
